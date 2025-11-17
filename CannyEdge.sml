@@ -1,20 +1,5 @@
-(* CannyEdge.sml
- *
- * Sequential Canny-like edge detector for grayscale images.
- *
- * Input:  image_matrix.txt
- *   First line: H W C   (C must be 1 – grayscale)
- *   Then H lines, each W integers (0..255)
- *
- * Output: canny_edges.txt
- *   First line: H W 1
- *   Then H lines, each W integers (0 or 255)
- *)
-
 structure CannyEdge =
 struct
-
-  (* ---------- Basic utilities ---------- *)
 
   fun tokens line = String.tokens Char.isSpace line
 
@@ -23,7 +8,6 @@ struct
       SOME n => n
     | NONE => raise Fail ("Cannot parse int: " ^ s)
 
-  (* Read header: "H W C" *)
   fun readHeader (filename : string) : int * int * int =
     let
       val ins = TextIO.openIn filename
@@ -40,7 +24,6 @@ struct
       | _ => raise Fail "Header must be: H W C"
     end
 
-  (* List length and helpers *)
   fun length xs = List.foldl (fn (_, acc) => acc + 1) 0 xs
 
   fun minList (x :: xs) = List.foldl Int.min x xs
@@ -49,7 +32,6 @@ struct
   fun maxList (x :: xs) = List.foldl Int.max x xs
     | maxList []        = raise Fail "maxList on empty list"
 
-  (* ---------- Read grayscale image as int list list ---------- *)
 
   type grayImage = int list list
 
@@ -57,7 +39,6 @@ struct
     let
       val ins = TextIO.openIn filename
 
-      (* skip header *)
       val _ =
         (case TextIO.inputLine ins of
            NONE => raise Fail "Missing header line"
@@ -81,9 +62,6 @@ struct
       loop []
     end
 
-  (* ---------- Vector helpers ---------- *)
-
-  (* polymorphic dims: works for any 'a vec2 *)
   fun dims v2 =
     let
       val h = Vector.length v2
@@ -94,7 +72,6 @@ struct
       (h, w)
     end
 
-  (* int vec2 from grayImage *)
   fun toIntVec2 (img : grayImage) : int Vector.vector Vector.vector =
     let
       fun rowToVec row = Vector.fromList row
@@ -102,7 +79,6 @@ struct
       Vector.fromList (List.map rowToVec img)
     end
 
-  (* real vec2 from grayImage *)
   fun toRealVec2 (img : grayImage) : Real.real Vector.vector Vector.vector =
     let
       fun rowToVec row =
@@ -110,15 +86,6 @@ struct
     in
       Vector.fromList (List.map rowToVec img)
     end
-
-  (* ---------- 3x3 Gaussian blur (integer arithmetic) ---------- *)
-
-  (* Kernel:
-      [1 2 1
-       2 4 2
-       1 2 1] / 16
-   * We do all arithmetic in int and then div 16.
-   *)
 
   fun gaussianBlur (img : grayImage) : grayImage =
     let
@@ -162,7 +129,6 @@ struct
       allRows 0
     end
 
-  (* ---------- Sobel Gx, Gy, magnitude ---------- *)
 
   fun sobelGradients (img : grayImage)
       : (Real.real Vector.vector Vector.vector
@@ -188,13 +154,11 @@ struct
           val p21 = getReal (y+1, x)
           val p22 = getReal (y+1, x+1)
 
-          (* Sobel Gx *)
           val gx =
             (~1.0) * p00 + 0.0 * p01 + 1.0 * p02 +
             (~2.0) * p10 + 0.0 * p11 + 2.0 * p12 +
             (~1.0) * p20 + 0.0 * p21 + 1.0 * p22
 
-          (* Sobel Gy *)
           val gy =
              1.0 * p00 +  2.0 * p01 +  1.0 * p02 +
              0.0 * p10 +  0.0 * p11 +  0.0 * p12 +
@@ -246,13 +210,9 @@ struct
       (v2ofRows gxRows, v2ofRows gyRows, v2ofRows magRows)
     end
 
-  (* ---------- Quantize gradient direction into 4 orientations ---------- *)
-
-  (* Approximate zero for reals *)
   fun isZero (x : Real.real) : bool =
     Real.abs x < 1.0E~6
 
-  (* atan2 implementation without real equality *)
   fun atan2 (y : Real.real, x : Real.real) : Real.real =
     if x > 0.0 then Math.atan (y / x)
     else if x < 0.0 andalso y >= 0.0 then Math.atan (y / x) + Math.pi
@@ -261,17 +221,11 @@ struct
     else if isZero x andalso y < 0.0 then ~(Math.pi / 2.0)
     else 0.0
 
-  (* returns orientation bucket:
-       0 = 0 degrees   (horizontal)
-       1 = 45 degrees  (diag)
-       2 = 90 degrees  (vertical)
-       3 = 135 degrees (diag)
-   *)
   fun quantizeDir (gx : Real.real, gy : Real.real) : int =
     let
-      val angle = atan2 (gy, gx) * 180.0 / Math.pi   (* degrees *)
+      val angle = atan2 (gy, gx) * 180.0 / Math.pi
       val a =
-        if angle < 0.0 then angle + 180.0 else angle (* in [0,180) *)
+        if angle < 0.0 then angle + 180.0 else angle
     in
       if      a < 22.5  orelse a >= 157.5 then 0  (* 0 deg   *)
       else if a < 67.5  then 1                     (* 45 deg  *)
@@ -279,7 +233,6 @@ struct
       else 3                                       (* 135 deg *)
     end
 
-  (* ---------- Non-maximum suppression ---------- *)
 
   fun nonMaxSuppression (gxV2, gyV2, magV2) :
       Real.real Vector.vector Vector.vector =
@@ -303,7 +256,6 @@ struct
           val m = magAt (y, x)
           val d = dirAt (y, x)
 
-          (* choose neighbors along gradient direction *)
           val (m1, m2) =
             (case d of
                0 => (magAt (y, x-1), magAt (y, x+1))          (* left/right *)
@@ -334,7 +286,6 @@ struct
       Vector.fromList (List.map (fn r => Vector.fromList r) rows)
     end
 
-  (* ---------- Double threshold & hysteresis ---------- *)
 
   val highRatio = 0.2       (* strong threshold *)
   val lowRatio  = 0.1       (* weak threshold *)
@@ -358,7 +309,6 @@ struct
       else loop (0, 0, 0.0)
     end
 
-  (* classify into: 0 = non-edge, 1 = weak, 2 = strong *)
   fun classifyEdges (magNMS : Real.real Vector.vector Vector.vector) =
     let
       val (h, w) = dims magNMS
@@ -392,7 +342,6 @@ struct
         (List.map (fn r => Vector.fromList r) (buildAll (0, [])))
     end
 
-  (* hysteresis: promote weak (1) if neighbor of strong (2), else drop *)
   fun hysteresis (labelsV2 : int Vector.vector Vector.vector)
       : grayImage =
     let
@@ -442,7 +391,6 @@ struct
       buildAll (0, [])
     end
 
-  (* ---------- Write final edge image ---------- *)
 
   fun writeGrayImage (filename : string, img : grayImage) : unit =
     let
@@ -472,8 +420,6 @@ struct
       loop img;
       TextIO.closeOut out
     end
-
-  (* ---------- Main entry point ---------- *)
 
   val _ =
     let
